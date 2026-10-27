@@ -38,8 +38,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       
-      - uses: taiki-e/cross-action@v1
+      - name: Install cross
         if: matrix.os == 'ubuntu-latest'
+        run: cargo install cross
       
       - name: Build
         run: |
