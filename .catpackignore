@@ -1,0 +1,16 @@
+# Dependencies and builds
+node_modules/
+dist/
+build/
+.venv/
+target/
+
+# Logs and temp files
+*.log
+tmp/
+.env
+*.min.js
+
+# Specific files
+docs/archive/
+tests/fixtures/

@@ -1,0 +1,65 @@
+# .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: catpack-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: catpack-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: catpack-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: catpack-macos-aarch64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            name: catpack-windows-x86_64.exe
+    
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - uses: taiki-e/cross-action@v1
+        if: matrix.os == 'ubuntu-latest'
+      
+      - name: Build
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+      
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp target/${{ matrix.target }}/release/catpack.exe dist/${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/catpack dist/${{ matrix.name }}
+          fi
+      
+      - uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/*
