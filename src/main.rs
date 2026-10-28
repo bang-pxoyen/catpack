@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::WalkBuilder;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -60,7 +60,6 @@ struct Args {
     tokens_only: bool,
 }
 
-/// Detects programming language by file extension
 fn detect_language(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("py") => "python",
@@ -96,7 +95,6 @@ fn detect_language(path: &Path) -> &'static str {
     }
 }
 
-/// Checks if a file is binary by looking for null bytes in the first 1024 bytes
 fn is_binary(path: &Path) -> bool {
     let Ok(bytes) = fs::read(path) else {
         return true;
@@ -104,7 +102,6 @@ fn is_binary(path: &Path) -> bool {
     bytes.iter().take(1024).any(|&b| b == 0)
 }
 
-/// Formats file content based on the chosen output format
 fn format_file(path: &str, content: &str, lang: &str, format: &Format) -> String {
     match format {
         Format::Simple => format!("\n\n===== {} =====\n\n{}\n", path, content),
@@ -142,27 +139,6 @@ fn format_file(path: &str, content: &str, lang: &str, format: &Format) -> String
     }
 }
 
-/// Builds ignore rules from file and CLI arguments
-fn build_ignore(dir: &Path, extra_ignores: &[String], output_file: &str) -> Result<Gitignore> {
-    let mut builder = GitignoreBuilder::new(dir);
-
-    let ignore_file = dir.join(".catpackignore");
-    if ignore_file.exists() {
-        builder.add(ignore_file);
-    }
-
-    builder.add_line(None, output_file)?;
-    builder.add_line(None, ".git/")?;
-    builder.add_line(None, ".gitignore")?;
-    builder.add_line(None, ".catpackignore")?;
-
-    for pattern in extra_ignores {
-        builder.add_line(None, pattern)?;
-    }
-
-    Ok(builder.build()?)
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -174,7 +150,6 @@ fn main() -> Result<()> {
         anyhow::bail!("{} is not a directory", target_dir.display());
     }
 
-    let ignore = build_ignore(&target_dir, &args.ignore, &args.output)?;
     let model = Model::from_str(&args.model);
 
     println!(
@@ -184,19 +159,23 @@ fn main() -> Result<()> {
         args.model
     );
 
+    let mut walk_builder = WalkBuilder::new(&target_dir);
+    walk_builder.add_custom_ignore_filename(".catpackignore");
+    walk_builder.hidden(false);
+    walk_builder.require_git(false);
+    
+    walk_builder.filter_entry(|entry| {
+        let name = entry.file_name().to_string_lossy();
+        name != ".git" && name != ".gitignore" && name != ".catpackignore"
+    });
+
     let mut output_content = String::new();
     let mut file_paths = Vec::new();
     let mut file_count = 0usize;
     let mut total_size = 0u64;
     let mut files_data = Vec::new();
 
-    for entry in walkdir::WalkDir::new(&target_dir)
-        .into_iter()
-        .filter_entry(|e| {
-            let rel = e.path().strip_prefix(&target_dir).unwrap_or(e.path());
-            !ignore.matched(rel, e.file_type().is_dir()).is_ignore()
-        })
-    {
+    for entry in walk_builder.build() {
         let entry = entry?;
         let path = entry.path();
 
@@ -204,18 +183,18 @@ fn main() -> Result<()> {
             continue;
         }
 
-        let rel_path = path.strip_prefix(&target_dir)?;
-
-        if ignore.matched(rel_path, false).is_ignore() {
+        if is_binary(path) {
             continue;
         }
 
-        if is_binary(path) {
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if file_name == args.output {
             continue;
         }
 
         match fs::read_to_string(path) {
             Ok(content) => {
+                let rel_path = path.strip_prefix(&target_dir)?;
                 let path_str = rel_path.to_string_lossy().replace('\\', "/");
                 let lang = if args.no_lang { "" } else { detect_language(path) };
                 let formatted = format_file(&path_str, &content, lang, &args.format);
